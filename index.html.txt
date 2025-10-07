@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบบริหารงบประมาณ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* --- 1. NEW: Modern Color Palette for Executives --- */
+        :root {
+            --primary-bg: #f8fafc; /* Softer background */
+            --sidebar-bg: #ffffff;
+            --header-bg: #ffffff;
+            --card-bg: #ffffff;
+            --text-primary: #1e293b; /* Dark Slate for primary text */
+            --text-secondary: #475569; /* Slate for secondary text */
+            --accent-color: #0f172a; /* Navy Blue for accents */
+            --border-color: #e2e8f0; /* Softer border */
+            --color-income: #059669; /* Emerald Green for income */
+            --color-expense: #d97706; /* Amber/Orange for expense */
+        }
+
+        body {
+            font-family: 'Sarabun', sans-serif;
+            background-color: var(--primary-bg);
+            color: var(--text-secondary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* --- 2. MODIFIED: Sidebar & Links --- */
+        .sidebar-link {
+            transition: all 0.2s ease-in-out;
+            border-left: 3px solid transparent;
+            color: #334155;
+            font-weight: 500;
+        }
+        .sidebar-link:hover {
+            background-color: #f1f5f9;
+            color: var(--accent-color);
+        }
+        .sidebar-link.active {
+            background-color: #f1f5f9;
+            color: var(--accent-color);
+            border-left-color: var(--accent-color);
+            font-weight: 600;
+        }
+
+        /* --- 3. MODIFIED: Table Styling --- */
+        .data-table th {
+            background-color: #f8fafc;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .data-table tbody td {
+            font-size: 16px;
+            vertical-align: middle;
+        }
+        .data-table .col-date, .data-table .col-manage {
+            white-space: nowrap;
+            width: 1%;
+        }
+        .data-table .col-item {
+            min-width: 250px;
+            max-width: 400px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        .data-table .col-details {
+            white-space: normal;
+            word-wrap: break-word;
+            max-width: 350px;
+            min-width: 200px;
+        }
+        /* Use new variables for income/expense colors */
+        .data-table .col-income {
+            color: var(--color-income);
+            font-weight: 600;
+            font-size: 16px;
+        }
+        .data-table .col-expense {
+            color: var(--color-expense);
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        /* --- 4. NEW & MODIFIED: General UI improvements --- */
+        /* Softer Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+        /* Refined Page Title */
+        #page-title {
+            letter-spacing: 0.02em;
+        }
+
+        /* Update summary card text colors to match table */
+        #total-income { color: var(--color-income); }
+        #total-expense { color: var(--color-expense); }
+        #total-balance { color: var(--text-primary); }
+
+        /* Refined Card Shadows */
+        .bg-\[var\(--card-bg\)\] {
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.07);
+        }
+
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 5px solid var(--accent-color);
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #toast {
+            visibility: hidden;
+            min-width: 250px;
+            margin-left: -125px;
+            color: #fff;
+            text-align: center;
+            border-radius: 8px;
+            padding: 16px;
+            position: fixed;
+            z-index: 100;
+            left: 50%;
+            bottom: 30px;
+            transition: visibility 0s, opacity 0.5s linear;
+            opacity: 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        #toast.show {
+            visibility: visible;
+            opacity: 1;
+        }
+        
+        .ts-control {
+            border-radius: 0.5rem !important;
+            border: 1px solid var(--border-color) !important;
+            padding: 0.5rem 0.75rem !important;
+        }
+        .ts-control .item {
+            background-color: var(--accent-color) !important;
+            color: white !important;
+            border-radius: 0.375rem !important;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <div id="loading-overlay" class="fixed inset-0 bg-gray-500 bg-opacity-50 flex items-center justify-center z-50">
+        <div class="loader"></div>
+    </div>
+
+    <aside class="w-64 flex-shrink-0 bg-[var(--sidebar-bg)] border-r border-[var(--border-color)] p-4 flex flex-col">
+        <div class="flex items-center gap-3 mb-8">
+            <div class="bg-blue-600 p-2 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-wallet"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+            </div>
+            <h1 class="text-xl font-bold text-[var(--text-primary)]">งบประมาณ</h1>
+        </div>
+        <nav class="flex flex-col gap-2">
+            <a href="#" id="nav-dashboard" class="sidebar-link active flex items-center gap-3 px-4 py-2 rounded-md">
+                <i data-lucide="layout-dashboard"></i><span>Dashboard</span>
+            </a>
+            <a href="#" id="nav-transactions" class="sidebar-link flex items-center justify-between gap-3 px-4 py-2 rounded-md">
+                <div class="flex items-center gap-3">
+                    <i data-lucide="list"></i><span>รายการทั้งหมด</span>
+                </div>
+                <span id="transactions-count-badge" class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full"></span>
+            </a>
+            <a href="#" id="nav-filter" class="sidebar-link flex items-center gap-3 px-4 py-2 rounded-md">
+                <i data-lucide="search"></i><span>ค้นหารายการ</span>
+            </a>
+        </nav>
+    </aside>
+
+    <main class="flex-1 flex flex-col">
+        <header class="bg-[var(--header-bg)] border-b border-[var(--border-color)] p-4">
+            <h2 id="page-title" class="text-2xl font-semibold text-[var(--text-primary)]">Dashboard</h2>
+        </header>
+        <div class="flex-1 p-6 overflow-y-auto">
+            
+            <div id="page-dashboard" class="page-content">
+                <div class="flex justify-end mb-4">
+                    <p id="latest-data-date" class="text-sm text-gray-500 italic"></p>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                    <div class="bg-[var(--card-bg)] p-6 rounded-xl shadow-sm border border-[var(--border-color)]">
+                        <h3 class="text-sm font-medium text-gray-500">ยอดรับทั้งหมด</h3>
+                        <p id="total-income" class="text-3xl font-bold mt-2">฿0.00</p>
+                    </div>
+                    <div class="bg-[var(--card-bg)] p-6 rounded-xl shadow-sm border border-[var(--border-color)]">
+                        <h3 class="text-sm font-medium text-gray-500">ยอดจ่ายทั้งหมด</h3>
+                        <p id="total-expense" class="text-3xl font-bold mt-2">฿0.00</p>
+                    </div>
+                    <div class="bg-[var(--card-bg)] p-6 rounded-xl shadow-sm border border-[var(--border-color)]">
+                        <h3 class="text-sm font-medium text-gray-500">ยอดคงเหลือ</h3>
+                        <p id="total-balance" class="text-3xl font-bold mt-2">฿0.00</p>
+                    </div>
+                </div>
+
+                <div class="bg-[var(--card-bg)] p-6 rounded-xl shadow-sm border border-[var(--border-color)]">
+                    <h3 class="text-lg font-semibold text-gray-700 mb-4">สรุปภาพรวม 12 เดือนล่าสุด</h3>
+                    <div class="relative h-[450px]">
+                        <canvas id="monthlySummaryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-transactions" class="page-content hidden">
+                 <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <div class="relative">
+                        <input type="text" id="search-transactions" placeholder="ค้นหา..." class="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                            <i data-lucide="search" class="w-5 h-5 text-gray-400"></i>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="btn-upload-excel" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2"><i data-lucide="file-up"></i> นำเข้า Excel</button>
+                        <button id="btn-export-csv" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2"><i data-lucide="file-down"></i> ส่งออก CSV</button>
+                        <button id="btn-add-transaction" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"><i data-lucide="plus"></i> เพิ่มรายการ</button>
+                    </div>
+                </div>
+                <div class="bg-[var(--card-bg)] rounded-xl shadow-sm border border-[var(--border-color)] overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-gray-600 data-table">
+                            <thead class="text-xs text-gray-700 uppercase">
+                                <tr>
+                                    <th scope="col" class="px-4 py-3 cursor-pointer col-date" data-sort="date">วันที่ <i data-lucide="arrow-up-down" class="inline w-4 h-4"></i></th>
+                                    <th scope="col" class="px-4 py-3 cursor-pointer col-item" data-sort="item">รายการ <i data-lucide="arrow-up-down" class="inline w-4 h-4"></i></th>
+                                    <th scope="col" class="px-4 py-3">รายละเอียด</th>
+                                    <th scope="col" class="px-4 py-3 text-right cursor-pointer" data-sort="income">รับ <i data-lucide="arrow-up-down" class="inline w-4 h-4"></i></th>
+                                    <th scope="col" class="px-4 py-3 text-right cursor-pointer" data-sort="expense">จ่าย <i data-lucide="arrow-up-down" class="inline w-4 h-4"></i></th>
+                                    <th scope="col" class="px-4 py-3 text-center col-manage">จัดการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="transactions-table-body">
+                                </tbody>
+                        </table>
+                    </div>
+                     <div id="pagination-controls" class="p-4 flex justify-between items-center"></div>
+                </div>
+            </div>
+
+            <div id="page-filter" class="page-content hidden">
+                <div class="bg-white p-4 rounded-lg shadow-sm border mb-4">
+                    <label for="filter-item-select" class="block text-sm font-medium text-gray-700 mb-2">เลือกรายการงบประมาณที่ต้องการ:</label>
+                    <select id="filter-item-select" multiple placeholder="ค้นหาและเลือกรายการ..."></select>
+                </div>
+
+                <div id="filter-summary-cards" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6 hidden">
+                     <div class="bg-[var(--card-bg)] p-6 rounded-xl shadow-sm border border-[var(--border-color)]">
+                        <h3 class="text-sm font-medium text-gray-500">ยอดรับ (ที่เลือก)</h3>
+                        <p id="filter-total-income" class="text-3xl font-bold text-green-600 mt-2">฿0.00</p>
+                    </div>
+                    <div class="bg-[var(--card-bg)] p-6 rounded-xl shadow-sm border border-[var(--border-color)]">
+                        <h3 class="text-sm font-medium text-gray-500">ยอดจ่าย (ที่เลือก)</h3>
+                        <p id="filter-total-expense" class="text-3xl font-bold text-red-600 mt-2">฿0.00</p>
+                    </div>
+                    <div class="bg-[var(--card-bg)] p-6 rounded-xl shadow-sm border border-[var(--border-color)]">
+                        <h3 class="text-sm font-medium text-gray-500">ยอดคงเหลือ (ที่เลือก)</h3>
+                        <p id="filter-total-balance" class="text-3xl font-bold text-[var(--text-primary)] mt-2">฿0.00</p>
+                    </div>
+                </div>
+
+                <div class="bg-[var(--card-bg)] rounded-xl shadow-sm border border-[var(--border-color)] overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-gray-600 data-table">
+                            <thead class="text-xs text-gray-700 uppercase">
+                                <tr>
+                                    <th scope="col" class="px-4 py-3">วันที่</th>
+                                    <th scope="col" class="px-4 py-3">รายละเอียด</th>
+                                    <th scope="col" class="px-4 py-3 text-right">รับ</th>
+                                    <th scope="col" class="px-4 py-3 text-right">จ่าย</th>
+                                    <th scope="col" class="px-4 py-3 text-right">คงเหลือสะสม</th>
+                                </tr>
+                            </thead>
+                            <tbody id="filter-table-body">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <div id="transaction-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center z-40">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg">
+            <h2 id="modal-title" class="text-2xl font-bold mb-6 text-[var(--text-primary)]">เพิ่มรายการใหม่</h2>
+            <form id="transaction-form">
+                <input type="hidden" id="transaction-id">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="date" class="block text-sm font-medium text-gray-700">วันที่</label>
+                        <input type="date" id="date" name="date" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required>
+                    </div>
+                    <div>
+                        <label for="item" class="block text-sm font-medium text-gray-700">รายการ</label>
+                        <input type="text" id="item" name="item" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <label for="details" class="block text-sm font-medium text-gray-700">รายละเอียด</label>
+                    <textarea id="details" name="details" rows="3" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"></textarea>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                        <label for="income" class="block text-sm font-medium text-gray-700">รับ</label>
+                        <input type="number" id="income" name="income" value="0" step="0.01" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
+                    </div>
+                    <div>
+                        <label for="expense" class="block text-sm font-medium text-gray-700">จ่าย</label>
+                        <input type="number" id="expense" name="expense" value="0" step="0.01" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" id="btn-cancel" class="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300">ยกเลิก</button>
+                    <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">บันทึก</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="delete-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center z-40">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+            <div class="text-center">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                    <i data-lucide="alert-triangle" class="h-6 w-6 text-red-600"></i>
+                </div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mt-3">ยืนยันการลบ</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500">คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้? การกระทำนี้ไม่สามารถย้อนกลับได้</p>
+                </div>
+                <div class="flex justify-center gap-3 mt-4">
+                    <button id="btn-cancel-delete" class="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300">ยกเลิก</button>
+                    <button id="btn-confirm-delete" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">ยืนยัน</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="excel-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center z-40">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg">
+            <h2 class="text-2xl font-bold mb-4 text-[var(--text-primary)]">นำเข้าข้อมูลจาก Excel</h2>
+            <p class="text-sm text-gray-600 mb-4">
+                <b>สำคัญ:</b> การนำเข้าข้อมูลใหม่จะลบข้อมูลเก่าทั้งหมดที่มีอยู่ในระบบ <br>
+                โปรดตรวจสอบว่าไฟล์ Excel ของคุณมีคอลัมน์ <code class="bg-gray-200 px-1 rounded">date</code>, <code class="bg-gray-200 px-1 rounded">item</code>, <code class="bg-gray-200 px-1 rounded">details</code>, <code class="bg-gray-200 px-1 rounded">income</code>, และ <code class="bg-gray-200 px-1 rounded">expense</code>. วันที่ควรอยู่ในรูปแบบ YYYY-MM-DD.
+            </p>
+            <input type="file" id="excel-file-input" accept=".xlsx, .xls" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            
+            <div id="upload-progress-container" class="mt-4 hidden">
+                <div class="flex justify-between mb-1">
+                    <span id="upload-progress-label" class="text-sm font-medium text-gray-700">Uploading...</span>
+                    <span id="upload-progress-percentage" class="text-sm font-medium text-gray-700">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="upload-progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <div id="upload-status" class="mt-4 text-sm"></div>
+            <div class="mt-6 flex justify-end gap-3">
+                <button type="button" id="btn-cancel-upload" class="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300">ปิด</button>
+                <button type="button" id="btn-process-upload" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">ประมวลผลไฟล์</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <?!= include('JavaScript'); ?>
+</body>
+</html>

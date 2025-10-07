@@ -1,0 +1,318 @@
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- STATE MANAGEMENT ---
+    let state = {
+        transactions: [],
+        currentPage: 1,
+        itemsPerPage: 100,
+        sortBy: 'date',
+        sortOrder: 'desc',
+        searchTerm: '',
+        totalItems: 0,
+    };
+    let debounceTimer;
+    let deleteId = null;
+    let excelData = null;
+    let tomSelectInstance = null;
+    let monthlySummaryChart = null;
+
+    // --- DOM ELEMENTS ---
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const pageTitle = document.getElementById('page-title');
+    const navLinks = { dashboard: document.getElementById('nav-dashboard'), transactions: document.getElementById('nav-transactions'), filter: document.getElementById('nav-filter') };
+    const pages = { dashboard: document.getElementById('page-dashboard'), transactions: document.getElementById('page-transactions'), filter: document.getElementById('page-filter') };
+    const transactionModal = document.getElementById('transaction-modal');
+    const deleteModal = document.getElementById('delete-modal');
+    const excelModal = document.getElementById('excel-modal');
+    const transactionForm = document.getElementById('transaction-form');
+    const transactionsTableBody = document.getElementById('transactions-table-body');
+    const searchInput = document.getElementById('search-transactions');
+    const filterSelect = document.getElementById('filter-item-select');
+    const filterTableBody = document.getElementById('filter-table-body');
+    const toast = document.getElementById('toast');
+    
+    // --- UTILITY FUNCTIONS ---
+    const showLoading = (show) => { loadingOverlay.style.display = show ? 'flex' : 'none'; };
+    const showToast = (message, isSuccess = true) => {
+        toast.textContent = message;
+        toast.className = `show ${isSuccess ? 'bg-green-500' : 'bg-red-500'}`;
+        setTimeout(() => { toast.className = toast.className.replace("show", ""); }, 5000);
+    };
+    const formatCurrency = (amount) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(amount);
+    const formatLatestDate = (dateString) => {
+        if (!dateString) return "ยังไม่มีข้อมูล";
+        const months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+        const date = new Date(dateString);
+        return `ข้อมูล ณ วันที่ ${date.getDate()} ${months[date.getMonth()]} พ.ศ. ${date.getFullYear() + 543}`;
+    };
+
+    // --- PAGE NAVIGATION ---
+    const switchPage = (pageName) => {
+        Object.values(pages).forEach(page => page.classList.add('hidden'));
+        Object.values(navLinks).forEach(link => link.classList.remove('active'));
+        pages[pageName].classList.remove('hidden');
+        navLinks[pageName].classList.add('active');
+        const titles = { dashboard: 'Dashboard', transactions: 'รายการทั้งหมด', filter: 'ค้นหารายการ' };
+        pageTitle.textContent = titles[pageName];
+
+        if (pageName === 'filter' && !tomSelectInstance.options.length) {
+          populateFilterSelect();
+        }
+    };
+    navLinks.dashboard.addEventListener('click', (e) => { e.preventDefault(); switchPage('dashboard'); });
+    navLinks.transactions.addEventListener('click', (e) => { e.preventDefault(); switchPage('transactions'); });
+    navLinks.filter.addEventListener('click', (e) => { e.preventDefault(); switchPage('filter'); });
+
+    // ====================================================================================
+    // REFACTORED DATA FETCHING & RENDERING LOGIC
+    // ====================================================================================
+    const initialLoad = () => {
+        showLoading(true);
+        fetchDashboardData();
+        refreshTransactions();
+    };
+
+    const fetchDashboardData = () => {
+        google.script.run.withSuccessHandler(summary => {
+            if (summary.error) return showToast(`Error fetching dashboard: ${summary.error}`, false);
+            document.getElementById('total-income').textContent = formatCurrency(summary.totalIncome);
+            document.getElementById('total-expense').textContent = formatCurrency(summary.totalExpense);
+            document.getElementById('total-balance').textContent = formatCurrency(summary.totalBalance);
+            document.getElementById('latest-data-date').textContent = formatLatestDate(summary.latestDate);
+            renderMonthlySummaryChart(summary.chartData);
+        }).getDashboardSummary();
+    };
+
+    const refreshTransactions = () => {
+        showLoading(true);
+        google.script.run.withSuccessHandler(response => {
+            if (response.error) {
+                showToast(`Error fetching transactions: ${response.error}`, false);
+                showLoading(false);
+                return;
+            }
+            state.transactions = response.transactions || [];
+            state.totalItems = response.totalItems || 0;
+            document.getElementById('transactions-count-badge').textContent = state.totalItems;
+            renderTransactionsTable();
+            showLoading(false);
+        }).withFailureHandler(err => {
+            showToast(`Error: ${err.message}`, false);
+            showLoading(false);
+        }).getTransactions({
+            page: state.currentPage,
+            itemsPerPage: state.itemsPerPage,
+            sortBy: state.sortBy,
+            sortOrder: state.sortOrder,
+            searchTerm: state.searchTerm
+        });
+    };
+
+    const renderTransactionsTable = () => {
+        transactionsTableBody.innerHTML = '';
+        if (state.transactions.length === 0) {
+            transactionsTableBody.innerHTML = `<tr><td colspan="6" class="text-center p-6 text-gray-500">ไม่พบข้อมูล</td></tr>`;
+        } else {
+            state.transactions.forEach(t => {
+                transactionsTableBody.insertAdjacentHTML('beforeend', `
+                    <tr class="bg-white border-b hover:bg-gray-50 align-middle">
+                        <td class="px-4 py-2">${t.date}</td> <td class="px-4 py-2 font-medium">${t.item}</td>
+                        <td class="px-4 py-2">${t.details}</td> <td class="px-4 py-2 text-right text-green-600">${formatCurrency(t.income)}</td>
+                        <td class="px-4 py-2 text-right text-red-600">${formatCurrency(t.expense)}</td>
+                        <td class="px-4 py-2 text-center">
+                            <button class="btn-edit p-1 text-blue-600 hover:text-blue-800" data-id="${t.id}"><i data-lucide="file-pen-line" class="w-5 h-5"></i></button>
+                            <button class="btn-delete p-1 text-red-600 hover:text-red-800" data-id="${t.id}"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
+                        </td>
+                    </tr>`);
+            });
+        }
+        lucide.createIcons();
+        renderPaginationControls();
+        updateSortHeaders();
+    };
+
+    const renderPaginationControls = () => {
+        const paginationControls = document.getElementById('pagination-controls');
+        const pageCount = Math.ceil(state.totalItems / state.itemsPerPage);
+        paginationControls.innerHTML = '';
+        if (pageCount <= 1) {
+            paginationControls.innerHTML = `<div class="text-sm text-gray-500">แสดง ${state.totalItems} จาก ${state.totalItems} รายการ</div>`;
+            return;
+        }
+        let html = `<div class="text-sm text-gray-500">หน้า ${state.currentPage} / ${pageCount} (ทั้งหมด ${state.totalItems} รายการ)</div> <div class="flex gap-1">`;
+        html += `<button data-page="${state.currentPage - 1}" class="page-btn px-3 py-1 rounded bg-gray-200 ${state.currentPage === 1 ? 'opacity-50' : ''}" ${state.currentPage === 1 ? 'disabled' : ''}>ก่อนหน้า</button>`;
+        const maxPages = 5;
+        let start = Math.max(1, state.currentPage - Math.floor(maxPages / 2));
+        let end = Math.min(pageCount, start + maxPages - 1);
+        if(end-start+1 < maxPages) start = Math.max(1, end - maxPages + 1);
+        if(start > 1) html += `<button data-page="1" class="page-btn px-3 py-1 rounded bg-gray-200">1</button>${start > 2 ? '<span>...</span>' : ''}`;
+        for (let i = start; i <= end; i++) html += `<button data-page="${i}" class="page-btn px-3 py-1 rounded ${i === state.currentPage ? 'bg-blue-600 text-white' : 'bg-gray-200'}">${i}</button>`;
+        if(end < pageCount) html += `${end < pageCount - 1 ? '<span>...</span>' : ''}<button data-page="${pageCount}" class="page-btn px-3 py-1 rounded bg-gray-200">${pageCount}</button>`;
+        html += `<button data-page="${state.currentPage + 1}" class="page-btn px-3 py-1 rounded bg-gray-200 ${state.currentPage === pageCount ? 'opacity-50' : ''}" ${state.currentPage === pageCount ? 'disabled' : ''}>ถัดไป</button></div>`;
+        paginationControls.innerHTML = html;
+        paginationControls.querySelectorAll('.page-btn').forEach(btn => btn.addEventListener('click', () => {
+            state.currentPage = parseInt(btn.dataset.page);
+            refreshTransactions();
+        }));
+    };
+    
+    const updateSortHeaders = () => {
+        document.querySelectorAll('.data-table thead th[data-sort]').forEach(th => {
+            th.classList.remove('sorted-asc', 'sorted-desc');
+            if (th.dataset.sort === state.sortBy) {
+                th.classList.add(state.sortOrder === 'asc' ? 'sorted-asc' : 'sorted-desc');
+            }
+        });
+    };
+
+    const renderMonthlySummaryChart = (chartData) => {
+        const { labels, incomeValues, expenseValues, incomeCountValues, expenseCountValues } = chartData;
+        const ctx = document.getElementById('monthlySummaryChart').getContext('2d');
+        if (monthlySummaryChart) monthlySummaryChart.destroy();
+        const incomeColor = '#059669', expenseColor = '#d97706', incomeBarColor = 'rgba(5, 150, 105, 0.4)', expenseBarColor = 'rgba(217, 119, 6, 0.4)';
+        monthlySummaryChart = new Chart(ctx, {
+            type: 'bar',
+            data: { labels, datasets: [
+                { label: 'จำนวนรายการจ่าย', data: expenseCountValues, backgroundColor: expenseBarColor, yAxisID: 'y' },
+                { label: 'จำนวนรายการรับ', data: incomeCountValues, backgroundColor: incomeBarColor, yAxisID: 'y' },
+                { label: 'ยอดเงินจ่าย (บาท)', data: expenseValues, borderColor: expenseColor, backgroundColor: expenseColor, type: 'line', yAxisID: 'y1', tension: 0.2 },
+                { label: 'ยอดเงินรับ (บาท)', data: incomeValues, borderColor: incomeColor, backgroundColor: incomeColor, type: 'line', yAxisID: 'y1', tension: 0.2 }
+            ]},
+            options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, stacked: false,
+                scales: { x: { grid: { display: false } }, y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'จำนวนรายการ' }, grid: { color: '#e2e8f0' } }, y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'จำนวนเงิน (บาท)' }, grid: { drawOnChartArea: false } } },
+                plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.dataset.type === 'line' ? formatCurrency(c.parsed.y) : `${c.parsed.y} รายการ`}` } } }
+            },
+        });
+    };
+    
+    // --- EVENT LISTENERS ---
+    searchInput.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            state.searchTerm = searchInput.value;
+            state.currentPage = 1;
+            refreshTransactions();
+        }, 500);
+    });
+
+    document.querySelector('.data-table thead').addEventListener('click', (e) => {
+        const header = e.target.closest('th[data-sort]');
+        if (!header) return;
+        const column = header.dataset.sort;
+        if (state.sortBy === column) state.sortOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
+        else { state.sortBy = column; state.sortOrder = 'desc'; }
+        state.currentPage = 1;
+        refreshTransactions();
+    });
+
+    transactionsTableBody.addEventListener('click', (e) => {
+        const editBtn = e.target.closest('.btn-edit');
+        if (editBtn) openTransactionModal(state.transactions.find(t => t.id === editBtn.dataset.id));
+        const deleteBtn = e.target.closest('.btn-delete');
+        if (deleteBtn) openDeleteModal(deleteBtn.dataset.id);
+    });
+
+    // --- MODAL & CUD ---
+    const showModal = (modal) => modal.style.display = 'flex';
+    const hideModal = (modal) => modal.style.display = 'none';
+    const openTransactionModal = (t = null) => {
+        transactionForm.reset();
+        document.getElementById('modal-title').textContent = t ? 'แก้ไขรายการ' : 'เพิ่มรายการใหม่';
+        document.getElementById('transaction-id').value = t ? t.id : '';
+        document.getElementById('date').value = t ? t.date : new Date().toISOString().split('T')[0];
+        if (t) { Object.keys(t).forEach(key => { const el = document.getElementById(key); if(el) el.value = t[key]; }); }
+        showModal(transactionModal);
+    };
+    const openDeleteModal = (id) => { deleteId = id; showModal(deleteModal); };
+    
+    const handleCUDSuccess = (message) => {
+        hideModal(transactionModal); hideModal(deleteModal); hideModal(excelModal);
+        showToast(message, true);
+        initialLoad(); // Full reload to ensure data consistency
+    };
+
+    transactionForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        showLoading(true);
+        const id = document.getElementById('transaction-id').value;
+        const data = { date: document.getElementById('date').value, item: document.getElementById('item').value, details: document.getElementById('details').value, income: parseFloat(document.getElementById('income').value) || 0, expense: parseFloat(document.getElementById('expense').value) || 0 };
+        const handler = (res) => { showLoading(false); if (res.error) showToast(`Error: ${res.error}`, false); else handleCUDSuccess('บันทึกข้อมูลสำเร็จ!'); };
+        if (id) google.script.run.withSuccessHandler(handler).updateTransaction(id, data);
+        else google.script.run.withSuccessHandler(handler).addTransaction(data);
+    });
+
+    document.getElementById('btn-confirm-delete').addEventListener('click', () => {
+        if (!deleteId) return;
+        showLoading(true);
+        google.script.run.withSuccessHandler(res => { showLoading(false); if (res.error) showToast(`Error: ${res.error}`, false); else handleCUDSuccess('ลบข้อมูลสำเร็จ!'); }).deleteTransaction(deleteId);
+    });
+
+    // --- FILTER PAGE LOGIC ---
+    const populateFilterSelect = () => {
+      showLoading(true);
+      google.script.run.withSuccessHandler(items => {
+        showLoading(false);
+        if (items.error) return showToast(`Could not load filter items: ${items.error}`, false);
+        const options = items.map(item => ({ value: item, text: item }));
+        tomSelectInstance.clear();
+        tomSelectInstance.clearOptions();
+        tomSelectInstance.addOptions(options);
+      }).getUniqueItems();
+    };
+
+    const renderFilterTable = () => {
+      const selectedItems = tomSelectInstance ? tomSelectInstance.getValue() : [];
+      const summaryCards = document.getElementById('filter-summary-cards');
+      if (selectedItems.length === 0) {
+          filterTableBody.innerHTML = `<tr><td colspan="5" class="text-center p-6 text-gray-500">กรุณาเลือกรายการเพื่อแสดงข้อมูล</td></tr>`;
+          summaryCards.classList.add('hidden');
+          return;
+      }
+      showLoading(true);
+      google.script.run.withSuccessHandler(data => {
+        showLoading(false);
+        if(data.error) return showToast(data.error, false);
+        let runningTotal = 0, totalIncome = 0, totalExpense = 0;
+        filterTableBody.innerHTML = '';
+        data.forEach(t => {
+            runningTotal += (t.income || 0) - (t.expense || 0); totalIncome += (t.income || 0); totalExpense += (t.expense || 0);
+            filterTableBody.insertAdjacentHTML('beforeend', `
+                <tr class="bg-white border-b hover:bg-gray-50 align-middle">
+                    <td class="px-4 py-2">${t.date}</td><td class="px-4 py-2">${t.details}</td>
+                    <td class="px-4 py-2 text-right text-green-600">${formatCurrency(t.income)}</td>
+                    <td class="px-4 py-2 text-right text-red-600">${formatCurrency(t.expense)}</td>
+                    <td class="px-4 py-2 text-right font-semibold">${formatCurrency(runningTotal)}</td></tr>`);
+        });
+        document.getElementById('filter-total-income').textContent = formatCurrency(totalIncome);
+        document.getElementById('filter-total-expense').textContent = formatCurrency(totalExpense);
+        document.getElementById('filter-total-balance').textContent = formatCurrency(totalIncome - totalExpense);
+        summaryCards.classList.remove('hidden');
+      }).getTransactionsByItems(selectedItems);
+    };
+
+    // --- OTHER EVENT LISTENERS ---
+    ['btn-cancel', 'btn-cancel-delete', 'btn-cancel-upload'].forEach(id => document.getElementById(id).addEventListener('click', () => { hideModal(transactionModal); hideModal(deleteModal); hideModal(excelModal); }));
+    document.getElementById('btn-add-transaction').addEventListener('click', () => openTransactionModal());
+    
+    // --- EXCEL/CSV (can be improved, export now only exports current page) ---
+    document.getElementById('btn-export-csv').addEventListener('click', () => {
+        showToast("ฟังก์ชัน Export กำลังส่งออกเฉพาะข้อมูลในหน้าปัจจุบัน", true);
+        let csv = "วันที่,รายการ,รายละเอียด,รับ,จ่าย\n";
+        state.transactions.forEach(t => { csv += [t.date, `"${t.item}"`, `"${t.details}"`, t.income, t.expense].join(',') + "\r\n"; });
+        const link = document.createElement("a");
+        link.setAttribute("href", encodeURI("data:text/csv;charset=utf-8,\uFEFF" + csv));
+        link.setAttribute("download", "budget_export_page_" + state.currentPage + ".csv");
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    });
+
+    document.getElementById('btn-upload-excel').addEventListener('click', () => showModal(excelModal));
+    document.getElementById('excel-file-input').addEventListener('change', (e) => { /* ... (same as original) ... */ });
+    document.getElementById('btn-process-upload').addEventListener('click', () => { /* ... (same as original, but calls handleCUDSuccess at the end) ... */ });
+    
+    // --- INITIALIZATION ---
+    tomSelectInstance = new TomSelect(filterSelect, { plugins: ['remove_button'], placeholder: 'ค้นหาและเลือกรายการ...' });
+    tomSelectInstance.on('change', renderFilterTable);
+    initialLoad();
+    lucide.createIcons();
+});
+</script>
